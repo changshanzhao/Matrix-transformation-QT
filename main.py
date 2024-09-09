@@ -2,11 +2,12 @@ import sys
 import torch
 from PyQt6 import QtCore
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget
-from PyQt6.QtCore import Qt, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSlot, QEvent, QPointF
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from mainwindow import Ui_MainWindow
+from PyQt6.QtGui import QMouseEvent
 
 class Transformations:
     def __init__(self):
@@ -43,11 +44,9 @@ class MplCanvas(FigureCanvas):
 class GraphicsView(QWidget):
     def __init__(self, *args, **kwargs):
         super(GraphicsView, self).__init__(*args, **kwargs)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.canvas = MplCanvas(self, width=5, height=4, dpi=100)
         self.transformations = Transformations()
         self.rect = None
-        self.mouse_pressed = True
         self.mouse_pos = (0, 0)
         layout = QVBoxLayout()
         layout.addWidget(self.canvas)
@@ -55,7 +54,25 @@ class GraphicsView(QWidget):
         self.draw_axes_and_rect()
         self.last_mouse_pos = None
         self.center_point = torch.tensor([384, 251], dtype=torch.float32)
-        self.setFocus()
+        self.setMouseTracking(True)
+        self.canvas.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj == self.canvas and event.type() == QEvent.Type.MouseMove:
+            # 从事件中获取位置信息
+            position = event.position().toPoint()
+            # 重新发布鼠标移动事件给GraphicsView
+            new_event = QMouseEvent(
+                QEvent.Type.MouseMove,
+                QPointF(position),
+                event.button(),
+                event.buttons(),
+                event.modifiers()
+            )
+            # 调用GraphicsView的mouseMoveEvent处理方法
+            self.mouseMoveEvent(new_event)
+            return True
+        return super().eventFilter(obj, event)
 
     def calculate_transforms(self, current_pos):
         # 计算平移
@@ -181,24 +198,12 @@ class GraphicsView(QWidget):
             self.rect.set_xy(transformed_points.tolist())
             self.canvas.draw()
 
-    def mousePressEvent(self, event):
-        print("press")
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.mouse_pressed = True
-            # 使用position().x()和position().y()来获取鼠标位置
-            self.last_mouse_pos = (event.position().x(), event.position().y())
 
     def mouseMoveEvent(self, event):
-        if self.mouse_pressed and self.parent().current_mode is not None:
-        # 使用position().x()和position().y()来获取鼠标位置
-            self.calculate_transforms((event.position().x(), event.position().y()))
-            self.update_rect()
-            self.last_mouse_pos = (event.position().x(), event.position().y())
+        self.calculate_transforms((event.position().x(), event.position().y()))
+        self.update_rect()
+        self.last_mouse_pos = (event.position().x(), event.position().y())
 
-    def mouseReleaseEvent(self, event):
-        print("release")
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.mouse_pressed = False
 
 
 class MainWindow(QMainWindow, Ui_MainWindow):
@@ -209,6 +214,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.graphics_view.setGeometry(QtCore.QRect(20, 70, 750, 500))
         self.init_buttons()
         self.current_mode = "translate"
+        self.setMouseTracking(True)
 
     def init_buttons(self):
         self.pushButton.clicked.connect(lambda: self.set_current_mode("translate"))
@@ -227,5 +233,4 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    window.graphics_view.setFocus()
     sys.exit(app.exec())
