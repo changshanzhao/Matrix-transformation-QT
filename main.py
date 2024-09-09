@@ -10,34 +10,25 @@ from mainwindow import Ui_MainWindow
 
 class Transformations:
     def __init__(self):
-        self.translation_matrix = torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=torch.float32)
-        self.rotation_matrix = torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=torch.float32)
-        self.scale_matrix = torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=torch.float32)
-        self.combined_matrix = torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=torch.float32)
+        self.scale_factor = 1.0
+        self.angle = 0.0
+        self.translation = torch.tensor([0, 0], dtype=torch.float32)
 
     def translate(self, dx, dy):
-        self.translation_matrix = torch.tensor([[1, 0, dx], [0, 1, dy], [0, 0, 1]], dtype=torch.float32)
-        self.update_combined_matrix()
+        self.translation += torch.tensor([dx, dy], dtype=torch.float32)
 
     def rotate(self, angle):
-        radian = torch.deg2rad(torch.tensor(angle, dtype=torch.float32))
-        self.rotation_matrix = torch.tensor([
-            [torch.cos(radian), -torch.sin(radian), 0],
-            [torch.sin(radian), torch.cos(radian), 0],
-            [0, 0, 1]
-        ], dtype=torch.float32)
-        self.update_combined_matrix()
+        self.angle += angle
 
-    def scale(self, sx, sy):
-        self.scale_matrix = torch.tensor([[sx, 0, 0], [0, sy, 0], [0, 0, 1]], dtype=torch.float32)
-        self.update_combined_matrix()
-
-    def update_combined_matrix(self):
-        self.combined_matrix = torch.matmul(self.scale_matrix,
-                                            torch.matmul(self.rotation_matrix, self.translation_matrix))
+    def set_scale(self, sx, sy):
+        self.scale_factor *= (sx + sy) / 2
 
     def get_transformed_matrix(self):
-        return self.combined_matrix
+        angle_tensor = torch.tensor(self.angle, dtype=torch.float32)
+        c, s = torch.cos(torch.deg2rad(angle_tensor)), torch.sin(torch.deg2rad(angle_tensor))
+        rotation_matrix = torch.tensor([[c, -s], [s, c]], dtype=torch.float32)
+        scale_matrix = torch.tensor([[self.scale_factor, 0], [0, self.scale_factor]], dtype=torch.float32)
+        return torch.matmul(scale_matrix, rotation_matrix), self.translation
 
 
 class MplCanvas(FigureCanvas):
@@ -53,6 +44,8 @@ class GraphicsView(QWidget):
         self.canvas = MplCanvas(self, width=5, height=4, dpi=100)
         self.transformations = Transformations()
         self.rect = None
+        self.mouse_pressed = False
+        self.mouse_pos = (0, 0)
         layout = QVBoxLayout()
         layout.addWidget(self.canvas)
         self.setLayout(layout)
@@ -63,37 +56,57 @@ class GraphicsView(QWidget):
         # 绘制坐标轴
         self.canvas.axes.axhline(y=0, color='black', linewidth=0.5)
         self.canvas.axes.axvline(x=0, color='black', linewidth=0.5)
-
         # 设置坐标轴的显示范围
         self.canvas.axes.set_xlim(-200, 200)
         self.canvas.axes.set_ylim(-200, 200)
-
-        # 绘制初始矩形
+        # 定义初始矩形的四个顶点
+        points = torch.tensor([
+            [-25, -25],
+            [25, -25],
+            [25, 25],
+            [-25, 25]
+        ], dtype=torch.float32)
+        # 将顶点添加到图形中
         self.rect = self.canvas.axes.add_patch(
-            plt.Rectangle((-25, -25), 50, 50, edgecolor='red', facecolor='none')
+            plt.Polygon(points.tolist(), closed=True, edgecolor='red', facecolor='none')
+
         )
         self.canvas.draw()
 
     def update_rect(self):
         if self.rect is not None:
+            rotation_matrix, translation = self.transformations.get_transformed_matrix()
             # 获取矩形的四个顶点
             points = torch.tensor([
-                [-50, -50, 1],
-                [50, -50, 1],
-                [-50, 50, 1],
-                [50, 50, 1]
+                [-25, -25, 1],
+                [25, -25, 1],
+                [25, 25, 1],
+                [-25, 25, 1]
             ], dtype=torch.float32)
             # 应用变换矩阵
-            transformed_points = torch.mm(self.transformations.get_transformed_matrix(), points.t()).t()
-            # 更新矩形的位置
-            x_min = transformed_points[:, 0].min().item()
-            y_min = transformed_points[:, 1].min().item()
-            width = (transformed_points[:, 0].max() - transformed_points[:, 0].min()).item()
-            height = (transformed_points[:, 1].max() - transformed_points[:, 1].min()).item()
-            self.rect.set_xy((x_min, y_min))
-            self.rect.set_width(width)
-            self.rect.set_height(height)
+            transformed_points = torch.matmul(points, torch.cat((rotation_matrix, translation.unsqueeze(1)), dim=1).t())
+            # 只取前两列作为新的点坐标
+            transformed_points = transformed_points[:, :2]
+            # 更新多边形的顶点
+            self.rect.set_xy(transformed_points.tolist())
             self.canvas.draw()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.mouse_pressed = True
+            self.mouse_pos = (event.x(), event.y())
+
+    def mouseMoveEvent(self, event):
+        if self.mouse_pressed:
+            dx = event.x() - self.mouse_pos[0]
+            dy = event.y() - self.mouse_pos[1]
+            self.transformations.translate(dx / 10, -dy / 10)
+            self.mouse_pos = (event.x(), event.y())
+            self.update_rect()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.mouse_pressed = False
 
 
 class MainWindow(QMainWindow, Ui_MainWindow):
@@ -120,20 +133,20 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         elif mode == "rotate":
             self.graphics_view.transformations.rotate(30)
         elif mode == "scale":
-            self.graphics_view.transformations.scale(1.5, 1.5)
+            self.graphics_view.transformations.set_scale(1.5, 1.5)
         elif mode == "translate_rotate":
             self.graphics_view.transformations.translate(50, 50)
             self.graphics_view.transformations.rotate(30)
         elif mode == "translate_scale":
             self.graphics_view.transformations.translate(50, 50)
-            self.graphics_view.transformations.scale(1.5, 1.5)
+            self.graphics_view.transformations.set_scale(1.5, 1.5)
         elif mode == "rotate_scale":
             self.graphics_view.transformations.rotate(30)
-            self.graphics_view.transformations.scale(1.5, 1.5)
+            self.graphics_view.transformations.set_scale(1.5, 1.5)
         elif mode == "translate_rotate_scale":
             self.graphics_view.transformations.translate(50, 50)
             self.graphics_view.transformations.rotate(30)
-            self.graphics_view.transformations.scale(1.5, 1.5)
+            self.graphics_view.transformations.set_scale(1.5, 1.5)
         self.graphics_view.update_rect()
 
 
