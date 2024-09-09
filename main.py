@@ -50,6 +50,67 @@ class GraphicsView(QWidget):
         layout.addWidget(self.canvas)
         self.setLayout(layout)
         self.draw_axes_and_rect()
+        self.last_mouse_pos = None
+        self.center_point = torch.tensor([0, 0], dtype=torch.float32)
+
+    def calculate_transforms(self, current_pos):
+        # 计算平移
+        if self.parent().current_mode == "translate":
+            if self.last_mouse_pos is not None:
+                dx = current_pos[0] - self.last_mouse_pos[0]
+                dy = current_pos[1] - self.last_mouse_pos[1]
+                self.transformations.translate(dx / 10, -dy / 10)
+        # 计算旋转
+        elif self.parent().current_mode == "rotate":
+            angle = (current_pos[0] - self.center_point[0]) * 0.1
+            self.transformations.rotate(angle)
+        # 计算缩放
+        elif self.parent().current_mode == "scale":
+            distance = ((current_pos[0] - self.center_point[0]) ** 2 + (
+                        current_pos[1] - self.center_point[1]) ** 2) ** 0.5
+            scale = max(1.0, distance / 50.0)  # 距离中心点越远，缩放越大
+            self.transformations.set_scale(scale, scale)
+
+        elif self.parent().current_mode == "translate_rotate":
+            if self.last_mouse_pos is not None:
+                dx = current_pos[0] - self.last_mouse_pos[0]
+                dy = current_pos[1] - self.last_mouse_pos[1]
+                self.transformations.translate(dx / 10, -dy / 10)
+            angle = (current_pos[0] - self.center_point[0]) * 0.1
+            self.transformations.rotate(angle)
+
+        elif self.parent().current_mode == "translate_scale":
+
+            if self.last_mouse_pos is not None:
+                dx = current_pos[0] - self.last_mouse_pos[0]
+                dy = current_pos[1] - self.last_mouse_pos[1]
+                self.transformations.translate(dx / 10, -dy / 10)
+            distance = ((current_pos[0] - self.center_point[0]) ** 2 + (
+                        current_pos[1] - self.center_point[1]) ** 2) ** 0.5
+            scale = max(1.0, distance / 50.0)  # 距离中心点越远，缩放越大
+            self.transformations.set_scale(scale, scale)
+
+        elif self.parent().current_mode == "rotate_scale":
+            angle = (current_pos[0] - self.center_point[0]) * 0.1
+            self.transformations.rotate(angle)
+            distance = ((current_pos[0] - self.center_point[0]) ** 2 + (
+                        current_pos[1] - self.center_point[1]) ** 2) ** 0.5
+            scale = max(1.0, distance / 50.0)  # 距离中心点越远，缩放越大
+            self.transformations.set_scale(scale, scale)
+
+        elif self.parent().current_mode == "translate_rotate_scale":
+            if self.last_mouse_pos is not None:
+                dx = current_pos[0] - self.last_mouse_pos[0]
+                dy = current_pos[1] - self.last_mouse_pos[1]
+                self.transformations.translate(dx / 10, -dy / 10)
+            angle = (current_pos[0] - self.center_point[0]) * 0.1
+            self.transformations.rotate(angle)
+            distance = ((current_pos[0] - self.center_point[0]) ** 2 + (
+                    current_pos[1] - self.center_point[1]) ** 2) ** 0.5
+            scale = max(1.0, distance / 50.0)  # 距离中心点越远，缩放越大
+            self.transformations.set_scale(scale, scale)
+
+        self.update_rect()
 
     def draw_axes_and_rect(self):
         self.canvas.axes.clear()
@@ -92,19 +153,23 @@ class GraphicsView(QWidget):
             self.canvas.draw()
 
     def mousePressEvent(self, event):
+        print("press")
         if event.button() == Qt.MouseButton.LeftButton:
             self.mouse_pressed = True
-            self.mouse_pos = (event.x(), event.y())
+            # 使用position().x()和position().y()来获取鼠标位置
+            self.last_mouse_pos = (event.position().x(), event.position().y())
+            self.center_point = torch.tensor([event.position().x(), event.position().y()], dtype=torch.float32)
 
     def mouseMoveEvent(self, event):
-        if self.mouse_pressed:
-            dx = event.x() - self.mouse_pos[0]
-            dy = event.y() - self.mouse_pos[1]
-            self.transformations.translate(dx / 10, -dy / 10)
-            self.mouse_pos = (event.x(), event.y())
+        print("move")
+        if self.mouse_pressed and self.parent().current_mode is not None:
+            # 使用position().x()和position().y()来获取鼠标位置
+            self.calculate_transforms((event.position().x(), event.position().y()))
             self.update_rect()
+            self.last_mouse_pos = (event.position().x(), event.position().y())
 
     def mouseReleaseEvent(self, event):
+        print("release")
         if event.button() == Qt.MouseButton.LeftButton:
             self.mouse_pressed = False
 
@@ -118,36 +183,23 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.init_buttons()
 
     def init_buttons(self):
-        self.pushButton.clicked.connect(lambda: self.apply_transform("translate"))
-        self.pushButton_2.clicked.connect(lambda: self.apply_transform("rotate"))
-        self.pushButton_3.clicked.connect(lambda: self.apply_transform("scale"))
-        self.pushButton_4.clicked.connect(lambda: self.apply_transform("translate_rotate"))
-        self.pushButton_5.clicked.connect(lambda: self.apply_transform("translate_scale"))
-        self.pushButton_6.clicked.connect(lambda: self.apply_transform("rotate_scale"))
-        self.pushButton_7.clicked.connect(lambda: self.apply_transform("translate_rotate_scale"))
+        self.pushButton.clicked.connect(lambda: self.set_current_mode("translate"))
+        self.pushButton_2.clicked.connect(lambda: self.set_current_mode("rotate"))
+        self.pushButton_3.clicked.connect(lambda: self.set_current_mode("scale"))
+        self.pushButton_4.clicked.connect(lambda: self.set_current_mode("translate_rotate"))
+        self.pushButton_5.clicked.connect(lambda: self.set_current_mode("translate_scale"))
+        self.pushButton_6.clicked.connect(lambda: self.set_current_mode("rotate_scale"))
+        self.pushButton_7.clicked.connect(lambda: self.set_current_mode("translate_rotate_scale"))
 
-    @pyqtSlot(str)
-    def apply_transform(self, mode):
-        if mode == "translate":
-            self.graphics_view.transformations.translate(50, 50)
-        elif mode == "rotate":
-            self.graphics_view.transformations.rotate(30)
-        elif mode == "scale":
-            self.graphics_view.transformations.set_scale(1.5, 1.5)
-        elif mode == "translate_rotate":
-            self.graphics_view.transformations.translate(50, 50)
-            self.graphics_view.transformations.rotate(30)
-        elif mode == "translate_scale":
-            self.graphics_view.transformations.translate(50, 50)
-            self.graphics_view.transformations.set_scale(1.5, 1.5)
-        elif mode == "rotate_scale":
-            self.graphics_view.transformations.rotate(30)
-            self.graphics_view.transformations.set_scale(1.5, 1.5)
-        elif mode == "translate_rotate_scale":
-            self.graphics_view.transformations.translate(50, 50)
-            self.graphics_view.transformations.rotate(30)
-            self.graphics_view.transformations.set_scale(1.5, 1.5)
-        self.graphics_view.update_rect()
+    def set_current_mode(self, mode):
+        self.current_mode = mode
+    # @pyqtSlot(str)
+    # def apply_transform(self, mode):
+    #     if self.graphics_view.mouse_pressed:
+    #         self.graphics_view.calculate_transforms(self.graphics_view.last_mouse_pos)
+    #         self.graphics_view.update_rect()
+    #     else:
+    #         print("No mouse press detected, cannot apply transformation.")
 
 
 if __name__ == "__main__":
